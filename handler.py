@@ -15,10 +15,9 @@ INPUT_DIR = f"{COMFY_DIR}/input"
 OUTPUT_DIR = f"{COMFY_DIR}/output"
 COMFY_LOG = "/tmp/comfy.log"
 
-# Install gcc if missing so Triton / comfy_kitchen compiles cleanly without rebuilding Dockerfile
-if shutil.which("gcc") is None:
+if shutil.which("gcc") is None or not os.path.exists("/usr/include/python3.12/Python.h"):
     subprocess.run(["apt-get", "update", "-qq"], check=False)
-    subprocess.run(["apt-get", "install", "-y", "-qq", "gcc", "libc6-dev"], check=False)
+    subprocess.run(["apt-get", "install", "-y", "-qq", "gcc", "libc6-dev", "python3-dev", "python3.12-dev"], check=False)
 
 if not os.path.exists(COMFY_DIR):
     gh = "https://github" + ".com"
@@ -280,5 +279,3 @@ def handler(job):
         err_body = e.read().decode("utf-8", errors="replace")
         return {"error": f"ComfyUI HTTP {e.code} error: {err_body}"}
     except Exception:
-        return {"error": traceback.format_exc()}
-
