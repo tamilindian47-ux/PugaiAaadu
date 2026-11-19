@@ -15,54 +15,61 @@ COMFY_HOST = "127.0.0.1:8188"
 INPUT_DIR = f"{COMFY_DIR}/input"
 OUTPUT_DIR = f"{COMFY_DIR}/output"
 COMFY_LOG = "/tmp/comfy.log"
+BOOT_ERROR = None
+COMFY_READY = False
 
-# 1. Install gcc + Python.h headers so Triton compiles cleanly
-if shutil.which("gcc") is None or not os.path.exists("/usr/include/python3.12/Python.h"):
-    subprocess.run(["apt-get", "update", "-qq"], check=False)
-    subprocess.run(["apt-get", "install", "-y", "-qq", "gcc", "libc6-dev", "python3-dev", "python3.12-dev"], check=False)
+def boot_comfy():
+    global BOOT_ERROR, COMFY_READY
+    if COMFY_READY:
+        return
+    try:
+        if shutil.which("gcc") is None or not os.path.exists("/usr/include/python3.12/Python.h"):
+            subprocess.run(["apt-get", "update", "-qq"], check=False)
+            subprocess.run(["apt-get", "install", "-y", "-qq", "gcc", "libc6-dev", "python3-dev", "python3.12-dev"], check=False)
 
-# 2. Ensure libcuda.so symlink exists for gcc -lcuda
-if not os.path.exists("/usr/lib/x86_64-linux-gnu/libcuda.so"):
-    matches = glob.glob("/usr/lib/x86_64-linux-gnu/libcuda.so.*") + glob.glob("/usr/local/cuda/lib64/stubs/libcuda.so*")
-    if matches:
-        os.symlink(matches[0], "/usr/lib/x86_64-linux-gnu/libcuda.so")
-        subprocess.run(["ldconfig"], check=False)
+        if not os.path.exists("/usr/lib/x86_64-linux-gnu/libcuda.so"):
+            matches = glob.glob("/usr/lib/x86_64-linux-gnu/libcuda.so.*") + glob.glob("/usr/local/cuda/lib64/stubs/libcuda.so*")
+            first_match = next(iter(matches), None)
+            if first_match:
+                os.symlink(first_match, "/usr/lib/x86_64-linux-gnu/libcuda.so")
+                subprocess.run(["ldconfig"], check=False)
 
-if not os.path.exists(COMFY_DIR):
-    gh = "https://github" + ".com"
-    subprocess.run(["git", "clone", "--depth", "1", f"{gh}/comfyanonymous/ComfyUI.git", COMFY_DIR], check=True)
-    shutil.rmtree(f"{COMFY_DIR}/models", ignore_errors=True)
-    os.symlink("/comfyui/models", f"{COMFY_DIR}/models")
-    for node_dir in ["ComfyUI-Viggle-Animate-H3", "ComfyUI-KJNodes", "ComfyUI-VideoHelperSuite"]:
-        src = f"/comfyui/custom_nodes/{node_dir}"
-        dst = f"{COMFY_DIR}/custom_nodes/{node_dir}"
-        if os.path.exists(src) and not os.path.exists(dst):
-            os.symlink(src, dst)
-    subprocess.run(["/opt/venv/bin/pip", "install", "-q", "-r", f"{COMFY_DIR}/requirements.txt"], check=False)
+        if not os.path.exists(COMFY_DIR):
+            gh = "https://github" + ".com"
+            subprocess.run(["git", "clone", "--depth", "1", f"{gh}/comfyanonymous/ComfyUI.git", COMFY_DIR], check=True)
+            shutil.rmtree(f"{COMFY_DIR}/models", ignore_errors=True)
+            os.symlink("/comfyui/models", f"{COMFY_DIR}/models")
+            for node_dir in ["ComfyUI-Viggle-Animate-H3", "ComfyUI-KJNodes", "ComfyUI-VideoHelperSuite"]:
+                src = f"/comfyui/custom_nodes/{node_dir}"
+                dst = f"{COMFY_DIR}/custom_nodes/{node_dir}"
+                if os.path.exists(src) and not os.path.exists(dst):
+                    os.symlink(src, dst)
+            subprocess.run(["/opt/venv/bin/pip", "install", "-q", "-r", f"{COMFY_DIR}/requirements.txt"], check=False)
 
-env = os.environ.copy()
-env["COMFY_KITCHEN_DISABLE_TRITON"] = "1"
-env["LIBRARY_PATH"] = "/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64/stubs:" + env.get("LIBRARY_PATH", "")
+        env = os.environ.copy()
+        env["COMFY_KITCHEN_DISABLE_TRITON"] = "1"
+        env["LIBRARY_PATH"] = "/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64/stubs:" + env.get("LIBRARY_PATH", "")
 
-log_fh = open(COMFY_LOG, "w")
-subprocess.Popen(
-    ["/opt/venv/bin/python", f"{COMFY_DIR}/main.py", "--listen", "127.0.0.1", "--port", "8188"],
-    stdout=log_fh,
-    stderr=subprocess.STDOUT,
-    env=env
-)
+        log_fh = open(COMFY_LOG, "w")
+        subprocess.Popen(
+            ["/opt/venv/bin/python", f"{COMFY_DIR}/main.py", "--listen", "127.0.0.1", "--port", "8188"],
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            env=env
+        )
 
-def wait_for_comfy():
-    for _ in range(90):
-        try:
-            urllib.request.urlopen(f"http://{COMFY_HOST}/system_stats", timeout=2)
-            return
-        except Exception:
-            time.sleep(1)
-    with open(COMFY_LOG, "r", errors="replace") as f:
-        raise RuntimeError(f"ComfyUI failed to start. Log:\n{f.read()[-2500:]}")
+        for _ in range(90):
+            try:
+                urllib.request.urlopen(f"http://{COMFY_HOST}/system_stats", timeout=2)
+                COMFY_READY = True
+                return
+            except Exception:
+                time.sleep(1)
 
-wait_for_comfy()
+        with open(COMFY_LOG, "r", errors="replace") as f:
+            BOOT_ERROR = f"ComfyUI failed to start within 90s. Log:\n{f.read()[-2500:]}"
+    except Exception:
+        BOOT_ERROR = traceback.format_exc()
 
 def save_input_file(data_or_url, filename):
     filepath = os.path.join(INPUT_DIR, filename)
@@ -240,6 +247,10 @@ def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, see
     }
 
 def handler(job):
+    boot_comfy()
+    if BOOT_ERROR:
+        return {"error": BOOT_ERROR}
+
     try:
         job_input = job.get("input") or {}
         ref_input = job_input.get("ref_image")
@@ -270,13 +281,3 @@ def handler(job):
             hist_req = urllib.request.urlopen(f"http://{COMFY_HOST}/history/{prompt_id}")
             history = json.loads(hist_req.read()) or {}
             if prompt_id in history:
-                entry = history.get(prompt_id) or {}
-                outputs = entry.get("outputs") or {}
-                node15 = outputs.get("15") or {}
-                gifs = node15.get("gifs") or []
-                if gifs:
-                    video_info = next(iter(gifs))
-                    out_path = os.path.join(OUTPUT_DIR, video_info.get("filename"))
-                    with open(out_path, "rb") as vf:
-                        out_b64 = base64.b64encode(vf.read()).decode("utf-8")
-                    return {
