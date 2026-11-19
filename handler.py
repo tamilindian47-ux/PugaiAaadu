@@ -3,6 +3,7 @@ import json
 import time
 import base64
 import urllib.request
+import urllib.error
 import subprocess
 import runpod
 
@@ -37,7 +38,53 @@ def save_input_file(data_or_url, filename):
             f.write(base64.b64decode(b64_data))
     return filename
 
+def resolve_viggle_nodes():
+    raw = urllib.request.urlopen(f"http://{COMFY_HOST}/object_info", timeout=10).read()
+    info = json.loads(raw)
+
+    text_cond_cls = None
+    cond_cls = None
+
+    for cls_name, meta in info.items():
+        disp = meta.get("display_name", "")
+        if "Load Text Conditioning" in disp or ("Viggle" in cls_name and "Text" in cls_name):
+            text_cond_cls = cls_name
+        if disp == "Viggle Animate Conditioning" or ("Viggle" in cls_name and "Conditioning" in cls_name and "Window" not in cls_name):
+            cond_cls = cls_name
+
+    if not text_cond_cls or not cond_cls:
+        viggle_keys = [k for k in info.keys() if "viggle" in k.lower() or "minimax" in k.lower()]
+        raise RuntimeError(f"Could not find Viggle nodes. Available matching nodes: {viggle_keys}")
+
+    # Inspect exact required input keys for both nodes
+    tc_req = info.get(text_cond_cls, {}).get("input", {}).get("required", {})
+    tc_key = next(iter(tc_req.keys()))
+
+    cond_req = info.get(cond_cls, {}).get("input", {}).get("required", {})
+    cond_opt = info.get(cond_cls, {}).get("input", {}).get("optional", {})
+    return text_cond_cls, tc_key, cond_cls, cond_req, cond_opt
+
 def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, seed=42):
+    text_cond_cls, tc_key, cond_cls, cond_req, cond_opt = resolve_viggle_nodes()
+
+    cond_inputs = {}
+    for k in list(cond_req.keys()) + list(cond_opt.keys()):
+        kl = k.lower()
+        if "pos" in kl or "cond" in kl:
+            cond_inputs[k] = ["5", 0]
+        elif "vae" in kl:
+            cond_inputs[k] = ["4", 0]
+        elif "ref" in kl or "img" in kl or "image" in kl:
+            cond_inputs[k] = ["6", 0]
+        elif "vid" in kl or "drive" in kl or "driving" in kl:
+            cond_inputs[k] = ["7", 0]
+        elif "len" in kl or "frame" in kl:
+            cond_inputs[k] = frame_cap
+        elif "width" in kl:
+            cond_inputs[k] = 480
+        elif "height" in kl:
+            cond_inputs[k] = 832
+
     return {
         "1": {
             "class_type": "UNETLoader",
@@ -69,9 +116,9 @@ def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, see
             }
         },
         "5": {
-            "class_type": "ViggleLoadTextCond",
+            "class_type": text_cond_cls,
             "inputs": {
-                "text_cond_name": "fixed_embed_fwd_anyframe.safetensors"
+                tc_key: "fixed_embed_fwd_anyframe.safetensors"
             }
         },
         "6": {
@@ -94,14 +141,8 @@ def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, see
             }
         },
         "8": {
-            "class_type": "ViggleAnimateConditioning",
-            "inputs": {
-                "positive": ["5", 0],
-                "vae": ["4", 0],
-                "ref_image": ["6", 0],
-                "driving_video": ["7", 0],
-                "length": frame_cap
-            }
+            "class_type": cond_cls,
+            "inputs": cond_inputs
         },
         "9": {
             "class_type": "BasicGuider",
@@ -175,14 +216,21 @@ def handler(job):
     ref_name = save_input_file(ref_input, f"ref_{ts}.png")
     vid_name = save_input_file(vid_input, f"drv_{ts}.mp4")
 
-    workflow = build_viggle_workflow(ref_name, vid_name, frame_cap=frame_cap, seed=seed)
-    payload = json.dumps({"prompt": workflow}).encode("utf-8")
-    req = urllib.request.Request(
-        f"http://{COMFY_HOST}/prompt",
-        data=payload,
-        headers={"Content-Type": "application/json"}
-    )
-    resp = json.loads(urllib.request.urlopen(req).read())
+    try:
+        workflow = build_viggle_workflow(ref_name, vid_name, frame_cap=frame_cap, seed=seed)
+        payload = json.dumps({"prompt": workflow}).encode("utf-8")
+        req = urllib.request.Request(
+            f"http://{COMFY_HOST}/prompt",
+            data=payload,
+            headers={"Content-Type": "application/json"}
+        )
+        resp = json.loads(urllib.request.urlopen(req).read())
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        return {"error": f"ComfyUI 400 validation error: {err_body}"}
+    except Exception as e:
+        return {"error": str(e)}
+
     prompt_id = resp.get("prompt_id")
 
     while True:
@@ -201,8 +249,7 @@ def handler(job):
                     "video_base64": out_b64,
                     "filename": video_info.get("filename")
                 }
-            break
-
-    return {"error": "Generation finished without producing an output video."}
+            status_msgs = history.get(prompt_id, {}).get("status", {})
+            return {"error": f"Workflow ended without video output. Status: {status_msgs}"}
 
 runpod.serverless.start({"handler": handler})
