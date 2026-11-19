@@ -32,7 +32,7 @@ def save_input_file(data_or_url, filename):
     if data_or_url.startswith("http://") or data_or_url.startswith("https://"):
         urllib.request.urlretrieve(data_or_url, filepath)
     else:
-        b64_data = data_or_url.split(",", 1)[1] if "," in data_or_url else data_or_url
+        _, _, b64_data = data_or_url.rpartition(",")
         with open(filepath, "wb") as f:
             f.write(base64.b64decode(b64_data))
     return filename
@@ -183,22 +183,23 @@ def handler(job):
         headers={"Content-Type": "application/json"}
     )
     resp = json.loads(urllib.request.urlopen(req).read())
-    prompt_id = resp["prompt_id"]
+    prompt_id = resp.get("prompt_id")
 
     while True:
         time.sleep(2)
         hist_req = urllib.request.urlopen(f"http://{COMFY_HOST}/history/{prompt_id}")
         history = json.loads(hist_req.read())
         if prompt_id in history:
-            outputs = history[prompt_id].get("outputs", {})
-            if "15" in outputs and "gifs" in outputs["15"]:
-                video_info = outputs["15"]["gifs"][0]
-                out_path = os.path.join(OUTPUT_DIR, video_info["filename"])
+            outputs = history.get(prompt_id, {}).get("outputs", {})
+            gifs = outputs.get("15", {}).get("gifs", [])
+            if gifs:
+                video_info = next(iter(gifs))
+                out_path = os.path.join(OUTPUT_DIR, video_info.get("filename"))
                 with open(out_path, "rb") as vf:
                     out_b64 = base64.b64encode(vf.read()).decode("utf-8")
                 return {
                     "video_base64": out_b64,
-                    "filename": video_info["filename"]
+                    "filename": video_info.get("filename")
                 }
             break
 
