@@ -10,11 +10,13 @@ import runpod
 COMFY_HOST = "127.0.0.1:8188"
 INPUT_DIR = "/comfyui/input"
 OUTPUT_DIR = "/comfyui/output"
+COMFY_LOG = "/tmp/comfy.log"
 
+log_fh = open(COMFY_LOG, "w")
 subprocess.Popen(
-    ["python3", "/comfyui/main.py", "--listen", "127.0.0.1", "--port", "8188"],
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL
+    ["/opt/venv/bin/python", "/comfyui/main.py", "--listen", "127.0.0.1", "--port", "8188"],
+    stdout=log_fh,
+    stderr=subprocess.STDOUT
 )
 
 def wait_for_comfy():
@@ -24,7 +26,8 @@ def wait_for_comfy():
             return
         except Exception:
             time.sleep(1)
-    raise RuntimeError("ComfyUI server failed to start.")
+    with open(COMFY_LOG, "r", errors="replace") as f:
+        raise RuntimeError(f"ComfyUI failed to start. Log:\n{f.read()[-2000:]}")
 
 wait_for_comfy()
 
@@ -53,10 +56,11 @@ def resolve_viggle_nodes():
             cond_cls = cls_name
 
     if not text_cond_cls or not cond_cls:
+        with open(COMFY_LOG, "r", errors="replace") as f:
+            tail = f.read()[-2500:]
         viggle_keys = [k for k in info.keys() if "viggle" in k.lower() or "minimax" in k.lower()]
-        raise RuntimeError(f"Could not find Viggle nodes. Available matching nodes: {viggle_keys}")
+        raise RuntimeError(f"Viggle nodes missing. Matching: {viggle_keys}\nComfyUI Log:\n{tail}")
 
-    # Inspect exact required input keys for both nodes
     tc_req = info.get(text_cond_cls, {}).get("input", {}).get("required", {})
     tc_key = next(iter(tc_req.keys()))
 
