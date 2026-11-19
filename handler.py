@@ -1,7 +1,9 @@
 import os
+import glob
 import json
 import time
 import base64
+import traceback
 import urllib.request
 import urllib.error
 import subprocess
@@ -12,7 +14,6 @@ INPUT_DIR = "/comfyui/input"
 OUTPUT_DIR = "/comfyui/output"
 COMFY_LOG = "/tmp/comfy.log"
 
-# Update ComfyUI core and install custom node requirements into /opt/venv
 subprocess.run(["git", "-C", "/comfyui", "pull"], check=False)
 subprocess.run(["/opt/venv/bin/pip", "install", "-q", "-r", "/comfyui/requirements.txt"], check=False)
 for _d in ["ComfyUI-Viggle-Animate-H3", "ComfyUI-KJNodes", "ComfyUI-VideoHelperSuite"]:
@@ -49,15 +50,16 @@ def save_input_file(data_or_url, filename):
             f.write(base64.b64decode(b64_data))
     return filename
 
-def resolve_viggle_nodes():
+def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, seed=42):
     raw = urllib.request.urlopen(f"http://{COMFY_HOST}/object_info", timeout=10).read()
-    info = json.loads(raw)
+    info = json.loads(raw) or {}
 
     text_cond_cls = None
     cond_cls = None
 
     for cls_name, meta in info.items():
-        disp = meta.get("display_name", "")
+        meta = meta or {}
+        disp = meta.get("display_name") or ""
         if "Load Text Conditioning" in disp or ("Viggle" in cls_name and "Text" in cls_name):
             text_cond_cls = cls_name
         if disp == "Viggle Animate Conditioning" or ("Viggle" in cls_name and "Conditioning" in cls_name and "Window" not in cls_name):
@@ -69,17 +71,15 @@ def resolve_viggle_nodes():
         viggle_keys = [k for k in info.keys() if "viggle" in k.lower() or "minimax" in k.lower()]
         raise RuntimeError(f"Viggle nodes missing. Matching: {viggle_keys}\nComfyUI Log:\n{tail}")
 
-    tc_input = info.get(text_cond_cls, {}).get("input") or {}
+    tc_meta = info.get(text_cond_cls) or {}
+    tc_input = tc_meta.get("input") or {}
     tc_req = tc_input.get("required") or {}
     tc_key = next(iter(tc_req.keys()))
 
-    cond_input = info.get(cond_cls, {}).get("input") or {}
+    cond_meta = info.get(cond_cls) or {}
+    cond_input = cond_meta.get("input") or {}
     cond_req = cond_input.get("required") or {}
     cond_opt = cond_input.get("optional") or {}
-    return text_cond_cls, tc_key, cond_cls, cond_req, cond_opt
-
-def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, seed=42):
-    text_cond_cls, tc_key, cond_cls, cond_req, cond_opt = resolve_viggle_nodes()
 
     cond_inputs = {}
     for k in list(cond_req.keys()) + list(cond_opt.keys()):
@@ -216,21 +216,21 @@ def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, see
     }
 
 def handler(job):
-    job_input = job.get("input", {})
-    ref_input = job_input.get("ref_image")
-    vid_input = job_input.get("driving_video")
-    frame_cap = int(job_input.get("frame_cap", 124))
-    seed = int(job_input.get("seed", 42))
-
-    if not ref_input or not vid_input:
-        return {"error": "Both ref_image and driving_video (base64 or URL) are required."}
-
-    os.makedirs(INPUT_DIR, exist_ok=True)
-    ts = int(time.time() * 1000)
-    ref_name = save_input_file(ref_input, f"ref_{ts}.png")
-    vid_name = save_input_file(vid_input, f"drv_{ts}.mp4")
-
     try:
+        job_input = job.get("input") or {}
+        ref_input = job_input.get("ref_image")
+        vid_input = job_input.get("driving_video")
+        frame_cap = int(job_input.get("frame_cap") or 124)
+        seed = int(job_input.get("seed") or 42)
+
+        if not ref_input or not vid_input:
+            return {"error": "Both ref_image and driving_video (base64 or URL) are required."}
+
+        os.makedirs(INPUT_DIR, exist_ok=True)
+        ts = int(time.time() * 1000)
+        ref_name = save_input_file(ref_input, f"ref_{ts}.png")
+        vid_name = save_input_file(vid_input, f"drv_{ts}.mp4")
+
         workflow = build_viggle_workflow(ref_name, vid_name, frame_cap=frame_cap, seed=seed)
         payload = json.dumps({"prompt": workflow}).encode("utf-8")
         req = urllib.request.Request(
@@ -238,32 +238,33 @@ def handler(job):
             data=payload,
             headers={"Content-Type": "application/json"}
         )
-        resp = json.loads(urllib.request.urlopen(req).read())
+        resp = json.loads(urllib.request.urlopen(req).read()) or {}
+        prompt_id = resp.get("prompt_id")
+
+        while True:
+            time.sleep(2)
+            hist_req = urllib.request.urlopen(f"http://{COMFY_HOST}/history/{prompt_id}")
+            history = json.loads(hist_req.read()) or {}
+            if prompt_id in history:
+                entry = history.get(prompt_id) or {}
+                outputs = entry.get("outputs") or {}
+                node15 = outputs.get("15") or {}
+                gifs = node15.get("gifs") or []
+                if gifs:
+                    video_info = next(iter(gifs))
+                    out_path = os.path.join(OUTPUT_DIR, video_info.get("filename"))
+                    with open(out_path, "rb") as vf:
+                        out_b64 = base64.b64encode(vf.read()).decode("utf-8")
+                    return {
+                        "video_base64": out_b64,
+                        "filename": video_info.get("filename")
+                    }
+                status_msgs = entry.get("status") or {}
+                return {"error": f"Workflow ended without video output. Status: {status_msgs}"}
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="replace")
-        return {"error": f"ComfyUI 400 validation error: {err_body}"}
-    except Exception as e:
-        return {"error": str(e)}
-
-    prompt_id = resp.get("prompt_id")
-
-    while True:
-        time.sleep(2)
-        hist_req = urllib.request.urlopen(f"http://{COMFY_HOST}/history/{prompt_id}")
-        history = json.loads(hist_req.read())
-        if prompt_id in history:
-            outputs = history.get(prompt_id, {}).get("outputs", {})
-            gifs = outputs.get("15", {}).get("gifs", [])
-            if gifs:
-                video_info = next(iter(gifs))
-                out_path = os.path.join(OUTPUT_DIR, video_info.get("filename"))
-                with open(out_path, "rb") as vf:
-                    out_b64 = base64.b64encode(vf.read()).decode("utf-8")
-                return {
-                    "video_base64": out_b64,
-                    "filename": video_info.get("filename")
-                }
-            status_msgs = history.get(prompt_id, {}).get("status", {})
-            return {"error": f"Workflow ended without video output. Status: {status_msgs}"}
+        return {"error": f"ComfyUI HTTP {e.code} error: {err_body}"}
+    except Exception:
+        return {"error": traceback.format_exc()}
 
 runpod.serverless.start({"handler": handler})
