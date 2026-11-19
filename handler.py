@@ -1,4 +1,5 @@
 import os
+import glob
 import shutil
 import json
 import time
@@ -15,9 +16,17 @@ INPUT_DIR = f"{COMFY_DIR}/input"
 OUTPUT_DIR = f"{COMFY_DIR}/output"
 COMFY_LOG = "/tmp/comfy.log"
 
+# 1. Install gcc + Python.h headers so Triton compiles cleanly
 if shutil.which("gcc") is None or not os.path.exists("/usr/include/python3.12/Python.h"):
     subprocess.run(["apt-get", "update", "-qq"], check=False)
     subprocess.run(["apt-get", "install", "-y", "-qq", "gcc", "libc6-dev", "python3-dev", "python3.12-dev"], check=False)
+
+# 2. Ensure libcuda.so symlink exists for gcc -lcuda
+if not os.path.exists("/usr/lib/x86_64-linux-gnu/libcuda.so"):
+    matches = glob.glob("/usr/lib/x86_64-linux-gnu/libcuda.so.*") + glob.glob("/usr/local/cuda/lib64/stubs/libcuda.so*")
+    if matches:
+        os.symlink(matches[0], "/usr/lib/x86_64-linux-gnu/libcuda.so")
+        subprocess.run(["ldconfig"], check=False)
 
 if not os.path.exists(COMFY_DIR):
     gh = "https://github" + ".com"
@@ -33,6 +42,7 @@ if not os.path.exists(COMFY_DIR):
 
 env = os.environ.copy()
 env["COMFY_KITCHEN_DISABLE_TRITON"] = "1"
+env["LIBRARY_PATH"] = "/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64/stubs:" + env.get("LIBRARY_PATH", "")
 
 log_fh = open(COMFY_LOG, "w")
 subprocess.Popen(
@@ -270,12 +280,3 @@ def handler(job):
                     with open(out_path, "rb") as vf:
                         out_b64 = base64.b64encode(vf.read()).decode("utf-8")
                     return {
-                        "video_base64": out_b64,
-                        "filename": video_info.get("filename")
-                    }
-                status_msgs = entry.get("status") or {}
-                return {"error": f"Workflow ended without video output. Status: {status_msgs}"}
-    except urllib.error.HTTPError as e:
-        err_body = e.read().decode("utf-8", errors="replace")
-        return {"error": f"ComfyUI HTTP {e.code} error: {err_body}"}
-    except Exception:
