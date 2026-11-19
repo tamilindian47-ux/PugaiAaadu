@@ -12,6 +12,14 @@ INPUT_DIR = "/comfyui/input"
 OUTPUT_DIR = "/comfyui/output"
 COMFY_LOG = "/tmp/comfy.log"
 
+# Update ComfyUI core and install custom node requirements into /opt/venv without rebuilding Dockerfile
+subprocess.run(["git", "-C", "/comfyui", "pull"], check=False)
+subprocess.run(["/opt/venv/bin/pip", "install", "-q", "-r", "/comfyui/requirements.txt"], check=False)
+for _d in ["ComfyUI-Viggle-Animate-H3", "ComfyUI-KJNodes", "ComfyUI-VideoHelperSuite"]:
+    _req = f"/comfyui/custom_nodes/{_d}/requirements.txt"
+    if os.path.exists(_req):
+        subprocess.run(["/opt/venv/bin/pip", "install", "-q", "-r", _req], check=False)
+
 log_fh = open(COMFY_LOG, "w")
 subprocess.Popen(
     ["/opt/venv/bin/python", "/comfyui/main.py", "--listen", "127.0.0.1", "--port", "8188"],
@@ -27,7 +35,7 @@ def wait_for_comfy():
         except Exception:
             time.sleep(1)
     with open(COMFY_LOG, "r", errors="replace") as f:
-        raise RuntimeError(f"ComfyUI failed to start. Log:\n{f.read()[-2000:]}")
+        raise RuntimeError(f"ComfyUI failed to start. Log:\n{f.read()[-2500:]}")
 
 wait_for_comfy()
 
@@ -57,7 +65,7 @@ def resolve_viggle_nodes():
 
     if not text_cond_cls or not cond_cls:
         with open(COMFY_LOG, "r", errors="replace") as f:
-            tail = f.read()[-2500:]
+            tail = f.read()[-3000:]
         viggle_keys = [k for k in info.keys() if "viggle" in k.lower() or "minimax" in k.lower()]
         raise RuntimeError(f"Viggle nodes missing. Matching: {viggle_keys}\nComfyUI Log:\n{tail}")
 
