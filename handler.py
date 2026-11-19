@@ -15,6 +15,11 @@ INPUT_DIR = f"{COMFY_DIR}/input"
 OUTPUT_DIR = f"{COMFY_DIR}/output"
 COMFY_LOG = "/tmp/comfy.log"
 
+# Install gcc if missing so Triton / comfy_kitchen compiles cleanly without rebuilding Dockerfile
+if shutil.which("gcc") is None:
+    subprocess.run(["apt-get", "update", "-qq"], check=False)
+    subprocess.run(["apt-get", "install", "-y", "-qq", "gcc", "libc6-dev"], check=False)
+
 if not os.path.exists(COMFY_DIR):
     gh = "https://github" + ".com"
     subprocess.run(["git", "clone", "--depth", "1", f"{gh}/comfyanonymous/ComfyUI.git", COMFY_DIR], check=True)
@@ -27,11 +32,15 @@ if not os.path.exists(COMFY_DIR):
             os.symlink(src, dst)
     subprocess.run(["/opt/venv/bin/pip", "install", "-q", "-r", f"{COMFY_DIR}/requirements.txt"], check=False)
 
+env = os.environ.copy()
+env["COMFY_KITCHEN_DISABLE_TRITON"] = "1"
+
 log_fh = open(COMFY_LOG, "w")
 subprocess.Popen(
     ["/opt/venv/bin/python", f"{COMFY_DIR}/main.py", "--listen", "127.0.0.1", "--port", "8188"],
     stdout=log_fh,
-    stderr=subprocess.STDOUT
+    stderr=subprocess.STDOUT,
+    env=env
 )
 
 def wait_for_comfy():
@@ -273,4 +282,3 @@ def handler(job):
     except Exception:
         return {"error": traceback.format_exc()}
 
-runpod.serverless.start({"handler": handler})
