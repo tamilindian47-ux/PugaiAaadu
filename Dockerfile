@@ -12,10 +12,11 @@ RUN GH="https://github"".com" && \
     git clone "${GH}/kijai/ComfyUI-KJNodes.git" && \
     git clone "${GH}/Kosinkadink/ComfyUI-VideoHelperSuite.git"
 
-RUN pip install --no-cache-dir \
-    -r ComfyUI-Viggle-Animate-H3/requirements.txt \
-    -r ComfyUI-KJNodes/requirements.txt \
-    -r ComfyUI-VideoHelperSuite/requirements.txt
+RUN for d in ComfyUI-Viggle-Animate-H3 ComfyUI-KJNodes ComfyUI-VideoHelperSuite; do \
+        if [ -f "$d/requirements.txt" ]; then \
+            pip install --no-cache-dir -r "$d/requirements.txt"; \
+        fi; \
+    done
 
 RUN mkdir -p /comfyui/models/diffusion_models \
              /comfyui/models/loras \
