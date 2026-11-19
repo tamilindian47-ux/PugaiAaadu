@@ -1,4 +1,5 @@
 import os
+import shutil
 import json
 import time
 import base64
@@ -8,21 +9,28 @@ import urllib.error
 import subprocess
 import runpod
 
+COMFY_DIR = "/comfyui_latest"
 COMFY_HOST = "127.0.0.1:8188"
-INPUT_DIR = "/comfyui/input"
-OUTPUT_DIR = "/comfyui/output"
+INPUT_DIR = f"{COMFY_DIR}/input"
+OUTPUT_DIR = f"{COMFY_DIR}/output"
 COMFY_LOG = "/tmp/comfy.log"
 
-subprocess.run(["git", "-C", "/comfyui", "pull"], check=False)
-subprocess.run(["/opt/venv/bin/pip", "install", "-q", "-r", "/comfyui/requirements.txt"], check=False)
-for _d in ["ComfyUI-Viggle-Animate-H3", "ComfyUI-KJNodes", "ComfyUI-VideoHelperSuite"]:
-    _req = f"/comfyui/custom_nodes/{_d}/requirements.txt"
-    if os.path.exists(_req):
-        subprocess.run(["/opt/venv/bin/pip", "install", "-q", "-r", _req], check=False)
+# Upgrade ComfyUI core at runtime without rebuilding the 36 GB Docker image
+if not os.path.exists(COMFY_DIR):
+    gh = "https://github" + ".com"
+    subprocess.run(["git", "clone", "--depth", "1", f"{gh}/comfyanonymous/ComfyUI.git", COMFY_DIR], check=True)
+    shutil.rmtree(f"{COMFY_DIR}/models", ignore_errors=True)
+    os.symlink("/comfyui/models", f"{COMFY_DIR}/models")
+    for node_dir in ["ComfyUI-Viggle-Animate-H3", "ComfyUI-KJNodes", "ComfyUI-VideoHelperSuite"]:
+        src = f"/comfyui/custom_nodes/{node_dir}"
+        dst = f"{COMFY_DIR}/custom_nodes/{node_dir}"
+        if os.path.exists(src) and not os.path.exists(dst):
+            os.symlink(src, dst)
+    subprocess.run(["/opt/venv/bin/pip", "install", "-q", "-r", f"{COMFY_DIR}/requirements.txt"], check=False)
 
 log_fh = open(COMFY_LOG, "w")
 subprocess.Popen(
-    ["/opt/venv/bin/python", "/comfyui/main.py", "--listen", "127.0.0.1", "--port", "8188"],
+    ["/opt/venv/bin/python", f"{COMFY_DIR}/main.py", "--listen", "127.0.0.1", "--port", "8188"],
     stdout=log_fh,
     stderr=subprocess.STDOUT
 )
