@@ -12,7 +12,7 @@ INPUT_DIR = "/comfyui/input"
 OUTPUT_DIR = "/comfyui/output"
 COMFY_LOG = "/tmp/comfy.log"
 
-# Update ComfyUI core and install custom node requirements into /opt/venv without rebuilding Dockerfile
+# Update ComfyUI core and install custom node requirements into /opt/venv
 subprocess.run(["git", "-C", "/comfyui", "pull"], check=False)
 subprocess.run(["/opt/venv/bin/pip", "install", "-q", "-r", "/comfyui/requirements.txt"], check=False)
 for _d in ["ComfyUI-Viggle-Animate-H3", "ComfyUI-KJNodes", "ComfyUI-VideoHelperSuite"]:
@@ -69,11 +69,13 @@ def resolve_viggle_nodes():
         viggle_keys = [k for k in info.keys() if "viggle" in k.lower() or "minimax" in k.lower()]
         raise RuntimeError(f"Viggle nodes missing. Matching: {viggle_keys}\nComfyUI Log:\n{tail}")
 
-    tc_req = info.get(text_cond_cls, {}).get("input", {}).get("required", {})
+    tc_input = info.get(text_cond_cls, {}).get("input") or {}
+    tc_req = tc_input.get("required") or {}
     tc_key = next(iter(tc_req.keys()))
 
-    cond_req = info.get(cond_cls, {}).get("input", {}).get("required", {})
-    cond_opt = info.get(cond_cls, {}).get("input", {}).get("optional", {})
+    cond_input = info.get(cond_cls, {}).get("input") or {}
+    cond_req = cond_input.get("required") or {}
+    cond_opt = cond_input.get("optional") or {}
     return text_cond_cls, tc_key, cond_cls, cond_req, cond_opt
 
 def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, seed=42):
