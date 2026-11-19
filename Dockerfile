@@ -1,4 +1,4 @@
-FROM runpod/worker-comfyui:5.2.0-base
+FROM runpod/worker-comfyui:5.10.0-base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
@@ -14,7 +14,7 @@ RUN GH="https://github"".com" && \
 
 RUN for d in ComfyUI-Viggle-Animate-H3 ComfyUI-KJNodes ComfyUI-VideoHelperSuite; do \
         if [ -f "$d/requirements.txt" ]; then \
-            pip install --no-cache-dir -r "$d/requirements.txt"; \
+            /opt/venv/bin/pip install --no-cache-dir -r "$d/requirements.txt"; \
         fi; \
     done
 
@@ -36,4 +36,4 @@ RUN HF="https://huggingface"".co" && \
 WORKDIR /
 COPY handler.py /handler.py
 
-CMD ["python3", "-u", "/handler.py"]
+CMD ["/opt/venv/bin/python", "-u", "/handler.py"]
