@@ -15,7 +15,6 @@ INPUT_DIR = f"{COMFY_DIR}/input"
 OUTPUT_DIR = f"{COMFY_DIR}/output"
 COMFY_LOG = "/tmp/comfy.log"
 
-# Upgrade ComfyUI core at runtime without rebuilding the 36 GB Docker image
 if not os.path.exists(COMFY_DIR):
     gh = "https://github" + ".com"
     subprocess.run(["git", "clone", "--depth", "1", f"{gh}/comfyanonymous/ComfyUI.git", COMFY_DIR], check=True)
