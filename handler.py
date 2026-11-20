@@ -1,6 +1,5 @@
 import os
 import glob
-import shutil
 import json
 import time
 import base64
@@ -18,33 +17,18 @@ COMFY_LOG = "/tmp/comfy.log"
 BOOT_ERROR = None
 COMFY_READY = False
 
+
 def boot_comfy():
     global BOOT_ERROR, COMFY_READY
     if COMFY_READY:
         return
     try:
-        if shutil.which("gcc") is None or not os.path.exists("/usr/include/python3.12/Python.h"):
-            subprocess.run(["apt-get", "update", "-qq"], check=False)
-            subprocess.run(["apt-get", "install", "-y", "-qq", "gcc", "libc6-dev", "python3-dev", "python3.12-dev"], check=False)
-
         if not os.path.exists("/usr/lib/x86_64-linux-gnu/libcuda.so"):
             matches = glob.glob("/usr/lib/x86_64-linux-gnu/libcuda.so.*") + glob.glob("/usr/local/cuda/lib64/stubs/libcuda.so*")
             first_match = next(iter(matches), None)
             if first_match:
                 os.symlink(first_match, "/usr/lib/x86_64-linux-gnu/libcuda.so")
                 subprocess.run(["ldconfig"], check=False)
-
-        if not os.path.exists(COMFY_DIR):
-            gh = "https://github" + ".com"
-            subprocess.run(["git", "clone", "--depth", "1", f"{gh}/comfyanonymous/ComfyUI.git", COMFY_DIR], check=True)
-            shutil.rmtree(f"{COMFY_DIR}/models", ignore_errors=True)
-            os.symlink("/comfyui/models", f"{COMFY_DIR}/models")
-            for node_dir in ["ComfyUI-Viggle-Animate-H3", "ComfyUI-KJNodes", "ComfyUI-VideoHelperSuite"]:
-                src = f"/comfyui/custom_nodes/{node_dir}"
-                dst = f"{COMFY_DIR}/custom_nodes/{node_dir}"
-                if os.path.exists(src) and not os.path.exists(dst):
-                    os.symlink(src, dst)
-            subprocess.run(["/opt/venv/bin/pip", "install", "-q", "-r", f"{COMFY_DIR}/requirements.txt"], check=False)
 
         env = os.environ.copy()
         env["COMFY_KITCHEN_DISABLE_TRITON"] = "1"
@@ -71,6 +55,7 @@ def boot_comfy():
     except Exception:
         BOOT_ERROR = traceback.format_exc()
 
+
 def save_input_file(data_or_url, filename):
     filepath = os.path.join(INPUT_DIR, filename)
     if data_or_url.startswith("http://") or data_or_url.startswith("https://"):
@@ -81,13 +66,13 @@ def save_input_file(data_or_url, filename):
             f.write(base64.b64decode(b64_data))
     return filename
 
+
 def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, seed=42):
     raw = urllib.request.urlopen(f"http://{COMFY_HOST}/object_info", timeout=10).read()
     info = json.loads(raw) or {}
 
     text_cond_cls = None
     cond_cls = None
-
     for cls_name, meta in info.items():
         meta = meta or {}
         disp = meta.get("display_name") or ""
@@ -246,6 +231,7 @@ def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, see
         }
     }
 
+
 def handler(job):
     boot_comfy()
     if BOOT_ERROR:
@@ -275,9 +261,37 @@ def handler(job):
         )
         resp = json.loads(urllib.request.urlopen(req).read()) or {}
         prompt_id = resp.get("prompt_id")
+        if not prompt_id:
+            return {"error": f"No prompt_id returned: {resp}"}
 
-        while True:
+        deadline = time.time() + 600
+        while time.time() < deadline:
             time.sleep(2)
             hist_req = urllib.request.urlopen(f"http://{COMFY_HOST}/history/{prompt_id}")
             history = json.loads(hist_req.read()) or {}
             if prompt_id in history:
+                entry = history[prompt_id]
+                status = (entry.get("status") or {}).get("status_str")
+                if status == "error":
+                    return {"error": f"ComfyUI execution failed: {entry.get('status')}"}
+
+                outputs = entry.get("outputs") or {}
+                for node_out in outputs.values():
+                    for key in ("gifs", "videos"):
+                        for item in node_out.get(key) or []:
+                            fname = item.get("filename")
+                            sub = item.get("subfolder") or ""
+                            fpath = os.path.join(OUTPUT_DIR, sub, fname)
+                            if os.path.exists(fpath):
+                                with open(fpath, "rb") as vf:
+                                    b64 = base64.b64encode(vf.read()).decode("utf-8")
+                                return {"video_base64": b64}
+                return {"error": f"Completed but no video output found: {outputs}"}
+
+        return {"error": "Timed out waiting for ComfyUI render."}
+    except Exception:
+        return {"error": traceback.format_exc()}
+
+
+if __name__ == "__main__":
+    runpod.serverless.start({"handler": handler})
