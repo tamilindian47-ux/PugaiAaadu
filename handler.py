@@ -259,7 +259,12 @@ def handler(job):
             data=payload,
             headers={"Content-Type": "application/json"}
         )
-        resp = json.loads(urllib.request.urlopen(req).read()) or {}
+        try:
+            resp = json.loads(urllib.request.urlopen(req).read()) or {}
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            return {"error": f"ComfyUI 400 response: {err_body}"}
+
         prompt_id = resp.get("prompt_id")
         if not prompt_id:
             return {"error": f"No prompt_id returned: {resp}"}
@@ -294,4 +299,4 @@ def handler(job):
 
 
 if __name__ == "__main__":
-    runpod.serverless.start({"handler": handler})
+    runpod.serverless.start({"handler":
