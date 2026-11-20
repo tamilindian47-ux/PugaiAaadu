@@ -36,7 +36,7 @@ def boot_comfy():
 
         log_fh = open(COMFY_LOG, "w")
         subprocess.Popen(
-            ["/opt/venv/bin/python", f"{COMFY_DIR}/main.py", "--listen", "127.0.0.1", "--port", "8188"],
+            ["/opt/venv/bin/python", f"{COMFY_DIR}/main.py", "--listen", "127.0.0.1", "--port", "8188", "--lowvram"],
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             env=env
