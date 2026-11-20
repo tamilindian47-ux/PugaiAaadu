@@ -36,7 +36,7 @@ def boot_comfy():
 
         log_fh = open(COMFY_LOG, "w")
         subprocess.Popen(
-            ["/opt/venv/bin/python", f"{COMFY_DIR}/main.py", "--listen", "127.0.0.1", "--port", "8188", "--lowvram"],
+            ["/opt/venv/bin/python", f"{COMFY_DIR}/main.py", "--listen", "127.0.0.1", "--port", "8188"],
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             env=env
@@ -67,7 +67,7 @@ def save_input_file(data_or_url, filename):
     return filename
 
 
-def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, seed=42):
+def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, seed=42, width=720, height=1280, steps=12, use_dmd=False):
     raw = urllib.request.urlopen(f"http://{COMFY_HOST}/object_info", timeout=10).read()
     info = json.loads(raw) or {}
 
@@ -111,11 +111,13 @@ def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, see
         elif "len" in kl or "frame" in kl:
             cond_inputs[k] = frame_cap
         elif "width" in kl:
-            cond_inputs[k] = 480
+            cond_inputs[k] = width
         elif "height" in kl:
-            cond_inputs[k] = 832
+            cond_inputs[k] = height
 
-    return {
+    model_src = ["2", 0] if use_dmd else ["1", 0]
+
+    workflow = {
         "1": {
             "class_type": "UNETLoader",
             "inputs": {
@@ -123,18 +125,10 @@ def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, see
                 "weight_dtype": "default"
             }
         },
-        "2": {
-            "class_type": "LoraLoaderModelOnly",
-            "inputs": {
-                "model": ["1", 0],
-                "lora_name": "viggle_animate_dmd_lora_r64.safetensors",
-                "strength_model": 1.0
-            }
-        },
         "3": {
             "class_type": "MiniMaxH3SigmaShift",
             "inputs": {
-                "model": ["2", 0],
+                "model": model_src,
                 "shift_video": 3.0,
                 "shift_audio": 3.0
             }
@@ -163,8 +157,8 @@ def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, see
                 "video": driving_video_name,
                 "force_rate": 24,
                 "force_size": "Custom",
-                "custom_width": 480,
-                "custom_height": 832,
+                "custom_width": width,
+                "custom_height": height,
                 "frame_load_cap": frame_cap,
                 "skip_first_frames": 0,
                 "select_every_nth": 1
@@ -191,12 +185,6 @@ def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, see
             "class_type": "KSamplerSelect",
             "inputs": {
                 "sampler_name": "euler"
-            }
-        },
-        "12": {
-            "class_type": "ManualSigmas",
-            "inputs": {
-                "sigmas": "1.0, 0.75, 0.5, 0.25, 0.0"
             }
         },
         "13": {
@@ -231,6 +219,34 @@ def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, see
         }
     }
 
+    if use_dmd:
+        workflow["2"] = {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {
+                "model": ["1", 0],
+                "lora_name": "viggle_animate_dmd_lora_r64.safetensors",
+                "strength_model": 1.0
+            }
+        }
+        workflow["12"] = {
+            "class_type": "ManualSigmas",
+            "inputs": {
+                "sigmas": "1.0, 0.75, 0.5, 0.25, 0.0"
+            }
+        }
+    else:
+        workflow["12"] = {
+            "class_type": "BasicScheduler",
+            "inputs": {
+                "model": ["3", 0],
+                "scheduler": "simple",
+                "steps": steps,
+                "denoise": 1.0
+            }
+        }
+
+    return workflow
+
 
 def handler(job):
     boot_comfy()
@@ -243,6 +259,10 @@ def handler(job):
         vid_input = job_input.get("driving_video")
         frame_cap = int(job_input.get("frame_cap") or 124)
         seed = int(job_input.get("seed") or 42)
+        width = int(job_input.get("width") or 720)
+        height = int(job_input.get("height") or 1280)
+        steps = int(job_input.get("steps") or 12)
+        use_dmd = bool(job_input.get("use_dmd", False))
 
         if not ref_input or not vid_input:
             return {"error": "Both ref_image and driving_video (base64 or URL) are required."}
@@ -252,7 +272,16 @@ def handler(job):
         ref_name = save_input_file(ref_input, f"ref_{ts}.png")
         vid_name = save_input_file(vid_input, f"drv_{ts}.mp4")
 
-        workflow = build_viggle_workflow(ref_name, vid_name, frame_cap=frame_cap, seed=seed)
+        workflow = build_viggle_workflow(
+            ref_name,
+            vid_name,
+            frame_cap=frame_cap,
+            seed=seed,
+            width=width,
+            height=height,
+            steps=steps,
+            use_dmd=use_dmd
+        )
         payload = json.dumps({"prompt": workflow}).encode("utf-8")
         req = urllib.request.Request(
             f"http://{COMFY_HOST}/prompt",
@@ -269,7 +298,7 @@ def handler(job):
         if not prompt_id:
             return {"error": f"No prompt_id returned: {resp}"}
 
-        deadline = time.time() + 600
+        deadline = time.time() + 900
         while time.time() < deadline:
             time.sleep(2)
             hist_req = urllib.request.urlopen(f"http://{COMFY_HOST}/history/{prompt_id}")
