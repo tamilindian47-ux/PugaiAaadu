@@ -100,14 +100,14 @@ def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, see
     cond_inputs = {}
     for k in list(cond_req.keys()) + list(cond_opt.keys()):
         kl = k.lower()
-        if "pos" in kl or "cond" in kl:
-            cond_inputs[k] = ["5", 0]
-        elif "vae" in kl:
-            cond_inputs[k] = ["4", 0]
+        if "vid" in kl or "drive" in kl or "driving" in kl:
+            cond_inputs[k] = ["7", 0]
         elif "ref" in kl or "img" in kl or "image" in kl:
             cond_inputs[k] = ["6", 0]
-        elif "vid" in kl or "drive" in kl or "driving" in kl:
-            cond_inputs[k] = ["7", 0]
+        elif "vae" in kl:
+            cond_inputs[k] = ["4", 0]
+        elif "text" in kl or "pos" in kl or "cond" in kl:
+            cond_inputs[k] = ["5", 0]
         elif "len" in kl or "frame" in kl:
             cond_inputs[k] = frame_cap
         elif "width" in kl:
@@ -299,4 +299,4 @@ def handler(job):
 
 
 if __name__ == "__main__":
-    runpod.serverless.start({"handler": handler})
+    runpod.serverless.start({"handler":
