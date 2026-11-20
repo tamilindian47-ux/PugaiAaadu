@@ -132,11 +132,11 @@ def build_viggle_workflow(ref_image_name, driving_video_name, frame_cap=124, see
             }
         },
         "3": {
-            "class_type": "ModelSamplingMiniMaxH3",
+            "class_type": "MiniMaxH3SigmaShift",
             "inputs": {
                 "model": ["2", 0],
-                "video_shift": 3.0,
-                "audio_shift": 3.0
+                "shift_video": 3.0,
+                "shift_audio": 3.0
             }
         },
         "4": {
